@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>스톱워치</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--sub:#6b7385;--line:#e3e6ec;--accent:#2563eb;--stop:#dc2626;--ok:#16a34a}
+  @media (prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2030;--fg:#e8ebf2;--sub:#8b93a7;--line:#2a3045;--accent:#4f8cff;--stop:#ef4444;--ok:#22c55e}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg);font-family:"Malgun Gothic","맑은 고딕",system-ui,sans-serif;display:flex;justify-content:center;padding:24px 16px}
+  main{width:100%;max-width:520px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px 20px}
+  #display{font-family:Consolas,"Courier New",monospace;font-size:clamp(40px,12vw,72px);text-align:center;font-variant-numeric:tabular-nums;letter-spacing:1px}
+  #display small{font-size:.5em;color:var(--sub)}
+  .btns{display:flex;gap:10px;margin-top:22px}
+  button{flex:1;padding:14px 0;font-size:17px;font-family:inherit;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  #toggle{background:var(--accent);color:#fff;border-color:transparent;font-weight:700}
+  #toggle.running{background:var(--stop)}
+  .hint{margin-top:10px;text-align:center;font-size:12px;color:var(--sub)}
+  .laps-head{display:flex;justify-content:space-between;align-items:center;margin:22px 4px 8px}
+  .laps-head h2{font-size:15px;margin:0}
+  .laps-head button{flex:none;padding:6px 12px;font-size:13px}
+  table{width:100%;border-collapse:collapse;font-family:Consolas,monospace;font-variant-numeric:tabular-nums}
+  th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  th{font-size:12px;color:var(--sub);font-family:inherit;font-weight:600}
+  td.best{color:var(--ok);font-weight:700} td.worst{color:var(--stop);font-weight:700}
+  .empty{text-align:center;color:var(--sub);padding:18px;font-size:14px}
+  .scroll{max-height:320px;overflow:auto}
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <div id="display" aria-live="off">00:00:00<small>.000</small></div>
+    <div class="btns">
+      <button id="toggle">시작</button>
+      <button id="lap" disabled>랩</button>
+      <button id="reset" disabled>초기화</button>
+    </div>
+    <div class="hint">단축키: 스페이스 = 시작/정지 · L = 랩 · R = 초기화</div>
+  </div>
+  <div class="card" style="margin-top:14px;padding:14px 16px">
+    <div class="laps-head"><h2>랩 기록</h2><button id="csv" disabled>CSV 저장</button></div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>구간</th><th>누적</th></tr></thead>
+        <tbody id="laps"></tbody>
+      </table>
+      <div id="empty" class="empty">기록이 없습니다</div>
+    </div>
+  </div>
+</main>
+<script>
+(function(){
+  var KEY="stopwatch.v1";
+  // 상태: elapsed(정지 시까지 누적 ms), startedAt(실행 중이면 Date.now() 기준 시작 시각), laps(누적 ms 배열)
+  var st={elapsed:0,startedAt:null,laps:[]};
+  var $=function(id){return document.getElementById(id)};
+  var disp=$("display"),bt=$("toggle"),bl=$("lap"),br=$("reset"),bc=$("csv"),tb=$("laps"),em=$("empty");
+  var raf=null;
+
+  function load(){try{var s=JSON.parse(localStorage.getItem(KEY));if(s&&typeof s.elapsed==="number")st=s;}catch(e){}}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(st));}catch(e){}}
+  function now(){return st.startedAt===null?st.elapsed:st.elapsed+(Date.now()-st.startedAt);}
+  function p(n,w){n=String(n);while(n.length<w)n="0"+n;return n;}
+  function fmt(ms){
+    var h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;
+    return p(h,2)+":"+p(m,2)+":"+p(s,2)+"."+p(Math.floor(ms%1000),3);
+  }
+  function paint(){
+    var t=fmt(now());
+    disp.innerHTML=t.slice(0,8)+"<small>"+t.slice(8)+"</small>";
+  }
+  function loop(){paint();raf=requestAnimationFrame(loop);}
+  function renderLaps(){
+    var L=st.laps,splits=L.map(function(v,i){return v-(i?L[i-1]:0);});
+    var min=Math.min.apply(null,splits),max=Math.max.apply(null,splits),html="";
+    for(var i=L.length-1;i>=0;i--){
+      var c=L.length>2?(splits[i]===min?"best":splits[i]===max?"worst":""):"";
+      html+="<tr><td>"+(i+1)+"</td><td class='"+c+"'>"+fmt(splits[i])+"</td><td>"+fmt(L[i])+"</td></tr>";
+    }
+    tb.innerHTML=html;
+    em.style.display=L.length?"none":"block";
+    bc.disabled=!L.length;
+  }
+  function ui(){
+    var run=st.startedAt!==null;
+    bt.textContent=run?"정지":(st.elapsed?"계속":"시작");
+    bt.className=run?"running":"";
+    bl.disabled=!run;
+    br.disabled=run||(!st.elapsed&&!st.laps.length);
+    if(run){if(!raf)loop();}else{if(raf){cancelAnimationFrame(raf);raf=null;}paint();}
+    renderLaps();
+  }
+  function toggle(){
+    if(st.startedAt===null){st.startedAt=Date.now();}
+    else{st.elapsed=now();st.startedAt=null;}
+    save();ui();
+  }
+  function lap(){if(st.startedAt!==null){st.laps.push(now());save();renderLaps();}}
+  function reset(){if(st.startedAt!==null)return;st={elapsed:0,startedAt:null,laps:[]};save();ui();}
+  function csv(){
+    var L=st.laps,rows=["번호,구간,누적"];
+    L.forEach(function(v,i){rows.push((i+1)+","+fmt(v-(i?L[i-1]:0))+","+fmt(v));});
+    var blob=new Blob(["﻿"+rows.join("\r\n")],{type:"text/csv;charset=utf-8"});
+    var a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);a.download="stopwatch_laps.csv";
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(a.href);},1000);
+  }
+  bt.onclick=toggle;bl.onclick=lap;br.onclick=reset;bc.onclick=csv;
+  document.addEventListener("keydown",function(e){
+    if(e.ctrlKey||e.altKey||e.metaKey)return;
+    var k=e.key.toLowerCase();
+    if(e.code==="Space"){e.preventDefault();toggle();}
+    else if(k==="l"||k==="ㅣ")lap();
+    else if(k==="r"||k==="ㄱ")reset();
+  });
+  load();ui();
+})();
+</script>
+</body>
+</html>
